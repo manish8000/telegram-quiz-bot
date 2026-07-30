@@ -1,6 +1,8 @@
+
 import os
 import json
 import logging
+import random
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from groq import Groq
@@ -32,21 +34,30 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 client = Groq(api_key=GROQ_API_KEY)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Hello! AI Quiz Bot mein aapka swagat hai.\n\nQuiz start karne ke liye likhein:\n`/quiz <topic>`", parse_mode="Markdown")
+    await update.message.reply_text("👋 Hello! AI Quiz Bot mein aapka swagat hai.\n\nQuiz start karne ke liye likhein:\n`/quiz <topic>`\nExample: `/quiz History` ya `/quiz Cricket`", parse_mode="Markdown")
 
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     topic = " ".join(context.args) if context.args else "General Knowledge"
-    msg = await update.message.reply_text(f"🤖 **{topic}** par AI question bana raha hai, 2 second rukiye...", parse_mode="Markdown")
+    msg = await update.message.reply_text(f"🤖 **{topic}** par naya question bana raha hoon, rukiye...", parse_mode="Markdown")
+    
+    # Har baar unique seed/id bhejenge taaki AI duplicate question na de
+    seed_id = random.randint(1000, 9999)
     
     prompt = f"""
-    Generate 1 multiple choice quiz question about '{topic}'.
-    Return ONLY a valid JSON object with NO markdown formatting, NO backticks.
-    JSON structure:
+    Generate 1 UNIQUE multiple choice quiz question about '{topic}' in HINDI language.
+    Constraint ID: {seed_id} (Ensure a completely new question is created each time).
+
+    Rules:
+    - Write the question and options in Hindi script (हिंदी).
+    - Provide 4 options.
+    - Return ONLY a valid raw JSON object with NO markdown, NO backticks.
+
+    JSON format strictly like this:
     {{
-        "question": "Question text",
-        "options": ["Option A", "Option B", "Option C", "Option D"],
+        "question": "प्रश्न यहाँ लिखें",
+        "options": ["विकल्प A", "विकल्प B", "विकल्प C", "विकल्प D"],
         "answer_index": 0,
-        "explanation": "Short explanation"
+        "explanation": "संक्षिप्त स्पष्टीकरण"
     }}
     """
     
@@ -54,6 +65,7 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
+            temperature=0.8,  # Dynamic & fresh responses ke liye
             response_format={"type": "json_object"}
         )
         
@@ -64,7 +76,7 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard.append([InlineKeyboardButton(opt, callback_data=f"ans_{i}_{data['answer_index']}")])
             
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await msg.edit_text(f"❓ **Question:** {data['question']}", reply_markup=reply_markup, parse_mode="Markdown")
+        await msg.edit_text(f"❓ **प्रश्न:** {data['question']}", reply_markup=reply_markup, parse_mode="Markdown")
         
     except Exception as e:
         await msg.edit_text(f"❌ Question banane mein problem aayi: {str(e)[:50]}")
@@ -75,9 +87,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     _, selected, correct = query.data.split("_")
     if selected == correct:
-        await query.edit_message_text(text=f"{query.message.text}\n\n✅ **Sahi Jawab!** 🎉")
+        await query.edit_message_text(text=f"{query.message.text}\n\n✅ **सही जवाब!** 🎉")
     else:
-        await query.edit_message_text(text=f"{query.message.text}\n\n❌ **Galat Jawab!** Sahi answer option {int(correct)+1} tha.")
+        await query.edit_message_text(text=f"{query.message.text}\n\n❌ **गलत जवाब!** सही विकल्प {int(correct)+1} था।")
 
 if __name__ == '__main__':
     app = ApplicationBuilder().token(BOT_TOKEN).build()
