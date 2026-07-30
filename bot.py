@@ -38,11 +38,10 @@ chat_topics = {}
 def generate_quiz_data(topic):
     seed_id = random.randint(10000, 99999)
     
-    # Randomly select section based on 70/30 weightage
-    # 70% chance -> Rajasthan GK, 30% chance -> Current Affairs / India GK / Science
+    # 70% Rajasthan GK | 30% India GK, Current & Science
     weight_choice = random.choices(["RAJ_GK", "GENERAL_MIX"], weights=[70, 30], k=1)[0]
     
-        prompt = f"""
+    prompt = f"""
     You are an expert exam paper setter for competitive exams like RPSC, RSMSSB, RAS, and CET in Rajasthan.
     
     Generate 1 HARD/ADVANCED LEVEL multiple choice quiz question in HINDI script.
@@ -60,20 +59,18 @@ def generate_quiz_data(topic):
     - Do NOT ask basic/easy questions like "Rajasthan ki rajdhani kya hai?".
     - Ask conceptual, modern, exam-standard moderate to tough questions.
     - Write question, options, and explanation strictly in Hindi (हिंदी).
-    - Limit question to under 250 characters and each option to under 100 characters.
-    - VERY IMPORTANT: Append "\n\n— Joined: @dailyquiz_manish" at the end of the question text.
+    - Keep question brief (under 200 characters) and each option under 80 characters.
     
     Return ONLY a valid raw JSON object with NO markdown, NO backticks.
 
     JSON Structure:
     {{
-        "question": "कठिन या परीक्षा स्तर का प्रश्न (हिंदी में)\n\n— Join: @dailyquiz_manish",
+        "question": "कठिन या परीक्षा स्तर का प्रश्न (हिंदी में)",
         "options": ["विकल्प A", "विकल्प B", "विकल्प C", "विकल्प D"],
         "answer_index": 0,
         "explanation": "संक्षिप्त स्पष्टीकरण (हिंदी में)"
     }}
     """
-
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
@@ -86,13 +83,17 @@ async def send_new_poll(chat_id, context, topic):
     try:
         data = generate_quiz_data(topic)
         
+        # Question aur Explanation ke saath Custom Text (@dailyquiz_manish) Append karna
+        question_text = f"{data['question']}\n\n📢 @dailyquiz_manish"
+        explanation_text = f"{data.get('explanation', 'सही उत्तर चुने!')}\n\n👉 Join: @dailyquiz_manish"
+
         await context.bot.send_poll(
             chat_id=chat_id,
-            question=data["question"],
+            question=question_text,
             options=data["options"],
             type="quiz",
             correct_option_id=int(data["answer_index"]),
-            explanation=data.get("explanation", "सही उत्तर चुने!"),
+            explanation=explanation_text,
             is_anonymous=False
         )
     except Exception as e:
@@ -117,7 +118,7 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_new_poll(chat_id, context, topic)
     await temp_msg.delete()
 
-# Answer dete hi auto next question
+# Jisse hi koi answer dega, agla question automatic aa jayega
 async def receive_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for chat_id, topic in list(chat_topics.items()):
         await send_new_poll(chat_id, context, topic)
