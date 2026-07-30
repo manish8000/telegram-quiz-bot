@@ -1,8 +1,8 @@
-
 import os
 import json
 import logging
 import random
+import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from groq import Groq
@@ -33,16 +33,9 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 client = Groq(api_key=GROQ_API_KEY)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Hello! AI Quiz Bot mein aapka swagat hai.\n\nQuiz start karne ke liye likhein:\n`/quiz <topic>`\nExample: `/quiz History` ya `/quiz Cricket`", parse_mode="Markdown")
-
-async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    topic = " ".join(context.args) if context.args else "General Knowledge"
-    msg = await update.message.reply_text(f"🤖 **{topic}** par naya question bana raha hoon, rukiye...", parse_mode="Markdown")
-    
-    # Har baar unique seed/id bhejenge taaki AI duplicate question na de
-    seed_id = random.randint(1000, 9999)
-    
+# Helper function to generate question content from Groq
+def generate_quiz_data(topic):
+    seed_id = random.randint(1000, 99999)
     prompt = f"""
     Generate 1 UNIQUE multiple choice quiz question about '{topic}' in HINDI language.
     Constraint ID: {seed_id} (Ensure a completely new question is created each time).
@@ -60,36 +53,57 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "explanation": "संक्षिप्त स्पष्टीकरण"
     }}
     """
-    
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.8,
+        response_format={"type": "json_object"}
+    )
+    return json.loads(response.choices[0].message.content)
+
+# Common function to send a new question
+async def send_new_question(chat_id, context, topic, message_to_edit=None):
+    if message_to_edit:
+        msg = await message_to_edit.edit_text(f"🤖 **{topic}** par agla question bana raha hoon...", parse_mode="Markdown")
+    else:
+        msg = await context.bot.send_message(chat_id=chat_id, text=f"🤖 **{topic}** par question bana raha hoon...", parse_mode="Markdown")
+        
     try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.8,  # Dynamic & fresh responses ke liye
-            response_format={"type": "json_object"}
-        )
-        
-        data = json.loads(response.choices[0].message.content)
-        
+        data = generate_quiz_data(topic)
         keyboard = []
         for i, opt in enumerate(data["options"]):
             keyboard.append([InlineKeyboardButton(opt, callback_data=f"ans_{i}_{data['answer_index']}")])
             
         reply_markup = InlineKeyboardMarkup(keyboard)
         await msg.edit_text(f"❓ **प्रश्न:** {data['question']}", reply_markup=reply_markup, parse_mode="Markdown")
-        
     except Exception as e:
         await msg.edit_text(f"❌ Question banane mein problem aayi: {str(e)[:50]}")
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("👋 Hello! AI Quiz Bot mein aapka swagat hai.\n\nQuiz start karne ke liye likhein:\n`/quiz <topic>`\nExample: `/quiz History` ya `/quiz Cricket`", parse_mode="Markdown")
+
+async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    topic = " ".join(context.args) if context.args else "General Knowledge"
+    context.user_data['last_topic'] = topic
+    await send_new_question(update.effective_chat.id, context, topic)
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     
+    # Answer checking logic
     _, selected, correct = query.data.split("_")
+    topic = context.user_data.get('last_topic', 'General Knowledge')
+    
     if selected == correct:
-        await query.edit_message_text(text=f"{query.message.text}\n\n✅ **सही जवाब!** 🎉")
+        await query.answer(text="✅ सही जवाब! 🎉", show_alert=False)
+        await query.edit_message_text(text=f"{query.message.text}\n\n✅ **सही जवाब!** 🎉\n\n⏳ *Agla question 2 second me aa raha hai...*", parse_mode="Markdown")
     else:
-        await query.edit_message_text(text=f"{query.message.text}\n\n❌ **गलत जवाब!** सही विकल्प {int(correct)+1} था।")
+        await query.answer(text=f"❌ गलत जवाब! सही option {int(correct)+1} था।", show_alert=False)
+        await query.edit_message_text(text=f"{query.message.text}\n\n❌ **गलत जवाब!** सही विकल्प {int(correct)+1} था।\n\n⏳ *Agla question 2 second me aa raha hai...*", parse_mode="Markdown")
+
+    # Wait 2 seconds and automatically load the next question
+    await asyncio.sleep(2)
+    await send_new_question(query.message.chat_id, context, topic)
 
 if __name__ == '__main__':
     app = ApplicationBuilder().token(BOT_TOKEN).build()
