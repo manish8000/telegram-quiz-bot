@@ -12,7 +12,8 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Gemini Setup
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-2.5-flash')
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👋 Quiz Bot ready hai! AI se quiz banane ke liye **/quiz topic** likhein.\n\nExample: `/quiz Science` ya `/quiz Bollywood`")
