@@ -3,7 +3,7 @@ import json
 import logging
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
-import google.generativeai as genai
+from openai import OpenAI
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -23,17 +23,16 @@ def run_health_check():
 
 threading.Thread(target=run_health_check, daemon=True).start()
 
-# --- TELEGRAM BOT & GEMINI AI LOGIC ---
+# --- OPENAI & TELEGRAM BOT LOGIC ---
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-2.0-flash')
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Hello! AI Quiz Bot mein aapka swagat hai.\n\nQuiz start karne ke liye likhein:\n`/quiz <topic>`\nExample: `/quiz History`", parse_mode="Markdown")
+    await update.message.reply_text("👋 Hello! ChatGPT Quiz Bot mein aapka swagat hai.\n\nQuiz start karne ke liye likhein:\n`/quiz <topic>`", parse_mode="Markdown")
 
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     topic = " ".join(context.args) if context.args else "General Knowledge"
@@ -52,9 +51,13 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     
     try:
-        response = model.generate_content(prompt)
-        text = response.text.strip().replace("```json", "").replace("```", "")
-        data = json.loads(text)
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"}
+        )
+        
+        data = json.loads(response.choices[0].message.content)
         
         keyboard = []
         for i, opt in enumerate(data["options"]):
@@ -84,3 +87,4 @@ if __name__ == '__main__':
     
     print("Bot is starting...")
     app.run_polling()
+            
