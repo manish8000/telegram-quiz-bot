@@ -84,7 +84,7 @@ async def send_new_poll(chat_id, context, topic):
         data = generate_quiz_data(topic)
         
         # Question aur Explanation ke saath Custom Text (@dailyquiz_manish) Append karna
-        question_text = f"{data['question']}\n\n📢 @dailyquiz_manish"
+        question_text = f"{data['question']}\n\n 📢  @dailyquiz_manish"
         explanation_text = f"{data.get('explanation', 'सही उत्तर चुने!')}\n\n👉 Join: @dailyquiz_manish"
 
         await context.bot.send_poll(
