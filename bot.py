@@ -15,13 +15,12 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"OK")
 
     def log_message(self, format, *args):
-        return  # Logs ko clean rakhne ke liye HTTP logs disable kiye hain
+        return
 
 def run_health_check():
     server = HTTPServer(('0.0.0.0', 8000), HealthCheckHandler)
     server.serve_forever()
 
-# Background thread mein server chalega
 threading.Thread(target=run_health_check, daemon=True).start()
 
 # --- TELEGRAM BOT & GEMINI AI LOGIC ---
@@ -31,8 +30,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
-
+model = genai.GenerativeModel('gemini-2.0-flash')
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👋 Hello! AI Quiz Bot mein aapka swagat hai.\n\nQuiz start karne ke liye likhein:\n`/quiz <topic>`\nExample: `/quiz History`", parse_mode="Markdown")
@@ -86,4 +84,3 @@ if __name__ == '__main__':
     
     print("Bot is starting...")
     app.run_polling()
-        
