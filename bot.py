@@ -35,7 +35,7 @@ client = Groq(api_key=GROQ_API_KEY)
 # Active chat topics store karne ke liye dictionary
 chat_topics = {}
 
-def generate_quiz_data(topic):
+def generate_quiz_data(@dailyquiz_manish):
     seed_id = random.randint(10000, 99999)
     
     # Randomly select section based on 70/30 weightage
