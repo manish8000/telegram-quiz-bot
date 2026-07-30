@@ -2,12 +2,11 @@ import os
 import json
 import logging
 import random
-import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from groq import Groq
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 # --- DUMMY WEB SERVER FOR KOYEB PORT 8000 HEALTH CHECK ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -33,7 +32,6 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 client = Groq(api_key=GROQ_API_KEY)
 
-# Helper function to generate HARD Rajasthan & Latest GK Questions
 def generate_quiz_data(topic):
     seed_id = random.randint(10000, 99999)
     
@@ -51,7 +49,8 @@ def generate_quiz_data(topic):
     Difficulty Rules:
     - Do NOT ask basic/easy questions like "Rajasthan ki rajdhani kya hai?".
     - Ask conceptual, modern, exam-standard moderate to tough questions.
-    - Write question and all options strictly in Hindi (हिंदी).
+    - Write question, options, and explanation strictly in Hindi (हिंदी).
+    - Limit question to under 250 characters and each option to under 100 characters.
     
     Return ONLY a valid raw JSON object with NO markdown, NO backticks.
 
@@ -60,7 +59,7 @@ def generate_quiz_data(topic):
         "question": "कठिन या परीक्षा स्तर का प्रश्न (हिंदी में)",
         "options": ["विकल्प A", "विकल्प B", "विकल्प C", "विकल्प D"],
         "answer_index": 0,
-        "explanation": "संक्षिप्त स्पष्टीकरण"
+        "explanation": "संक्षिप्त स्पष्टीकरण (हिंदी में)"
     }}
     """
     response = client.chat.completions.create(
@@ -71,64 +70,43 @@ def generate_quiz_data(topic):
     )
     return json.loads(response.choices[0].message.content)
 
-# Send new fresh question as a NEW message
-async def send_new_question(chat_id, context, topic):
+async def send_new_poll(chat_id, context, topic):
     try:
         data = generate_quiz_data(topic)
-        keyboard = []
-        for i, opt in enumerate(data["options"]):
-            keyboard.append([InlineKeyboardButton(opt, callback_data=f"ans_{i}_{data['answer_index']}")])
-            
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await context.bot.send_message(
-            chat_id=chat_id, 
-            text=f"❓ **प्रश्न:** {data['question']}", 
-            reply_markup=reply_markup, 
-            parse_mode="Markdown"
+        
+        await context.bot.send_poll(
+            chat_id=chat_id,
+            question=data["question"],
+            options=data["options"],
+            type="quiz",
+            correct_option_id=int(data["answer_index"]),
+            explanation=data.get("explanation", "सही उत्तर चुने!"),
+            is_anonymous=False
         )
     except Exception as e:
-        await context.bot.send_message(chat_id=chat_id, text=f"❌ Question banane mein problem aayi: {str(e)[:50]}")
+        await context.bot.send_message(chat_id=chat_id, text=f"❌ Question banane mein problem aayi: {str(e)[:100]}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 **Rajasthan Exam Quiz Bot** me aapka swagat hai!\n\n"
-        "RPSC / RSMSSB / CET level questions ke liye type karein:\n"
+        "Quiz start karne ke liye type karein:\n"
         "`/quiz` (For Rajasthan & Latest Mixed Quiz)\n"
-        "`/quiz Rajasthan History` (For specific topics)", 
+        "`/quiz Rajasthan Geography` (For specific topics)", 
         parse_mode="Markdown"
     )
 
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     topic = " ".join(context.args) if context.args else "Rajasthan Special & Latest GK"
-    context.user_data['last_topic'] = topic
     
-    # Send temporary status message
-    temp_msg = await update.message.reply_text("🤖 *Naya question tayar ho raha hai...*", parse_mode="Markdown")
+    temp_msg = await update.message.reply_text("🤖 *Exam Level Question tayar ho raha hai...*", parse_mode="Markdown")
     
-    # Delete temporary loading message and send actual question
-    await send_new_question(update.effective_chat.id, context, topic)
+    await send_new_poll(update.effective_chat.id, context, topic)
     await temp_msg.delete()
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    
-    _, selected, correct = query.data.split("_")
-    topic = context.user_data.get('last_topic', 'Rajasthan Special & Latest GK')
-    
-    # Show instant Telegram Alert popup (No chat cluttering text!)
-    if selected == correct:
-        await query.answer(text="✅ Bilkul Sahi Jawab! 🎉", show_alert=True)
-    else:
-        await query.answer(text=f"❌ Galat Jawab! Sahi option ({int(correct)+1}) tha.", show_alert=True)
-
-    # Automatically trigger next question immediately as a NEW message
-    await send_new_question(query.message.chat_id, context, topic)
 
 if __name__ == '__main__':
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("quiz", quiz))
-    app.add_handler(CallbackQueryHandler(button_handler))
     
     print("Bot is starting...")
     app.run_polling()
