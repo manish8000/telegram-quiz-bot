@@ -33,21 +33,31 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 client = Groq(api_key=GROQ_API_KEY)
 
-# Helper function to generate question content from Groq
+# Helper function to generate HARD Rajasthan & Latest GK Questions
 def generate_quiz_data(topic):
-    seed_id = random.randint(1000, 99999)
+    seed_id = random.randint(10000, 99999)
+    
     prompt = f"""
-    Generate 1 UNIQUE multiple choice quiz question about '{topic}' in HINDI language.
-    Constraint ID: {seed_id} (Ensure a completely new question is created each time).
+    You are an expert exam paper setter for competitive exams like RPSC, RSMSSB, RAS, and CET in Rajasthan.
+    
+    Generate 1 HARD/ADVANCED LEVEL multiple choice quiz question in HINDI script.
+    
+    Topics Priority:
+    1. If user topic is specified, use that.
+    2. Otherwise, give 70% weightage to Rajasthan General Knowledge (History, Culture, Geography, Polity, Economic Review) and Latest Current Affairs, and 30% to Indian GK.
 
-    Rules:
-    - Write the question and options in Hindi script (हिंदी).
-    - Provide 4 options.
-    - Return ONLY a valid raw JSON object with NO markdown, NO backticks.
+    Constraint ID: {seed_id} (Must create a completely unique question every time).
 
-    JSON format strictly like this:
+    Difficulty Rules:
+    - Do NOT ask basic/easy questions like "Rajasthan ki rajdhani kya hai?".
+    - Ask conceptual, modern, exam-standard moderate to tough questions.
+    - Write question and all options strictly in Hindi (हिंदी).
+    
+    Return ONLY a valid raw JSON object with NO markdown, NO backticks.
+
+    JSON Structure:
     {{
-        "question": "प्रश्न यहाँ लिखें",
+        "question": "कठिन या परीक्षा स्तर का प्रश्न (हिंदी में)",
         "options": ["विकल्प A", "विकल्प B", "विकल्प C", "विकल्प D"],
         "answer_index": 0,
         "explanation": "संक्षिप्त स्पष्टीकरण"
@@ -56,18 +66,13 @@ def generate_quiz_data(topic):
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.8,
+        temperature=0.85,
         response_format={"type": "json_object"}
     )
     return json.loads(response.choices[0].message.content)
 
-# Common function to send a new question
-async def send_new_question(chat_id, context, topic, message_to_edit=None):
-    if message_to_edit:
-        msg = await message_to_edit.edit_text(f"🤖 **{topic}** par agla question bana raha hoon...", parse_mode="Markdown")
-    else:
-        msg = await context.bot.send_message(chat_id=chat_id, text=f"🤖 **{topic}** par question bana raha hoon...", parse_mode="Markdown")
-        
+# Send new fresh question as a NEW message
+async def send_new_question(chat_id, context, topic):
     try:
         data = generate_quiz_data(topic)
         keyboard = []
@@ -75,34 +80,48 @@ async def send_new_question(chat_id, context, topic, message_to_edit=None):
             keyboard.append([InlineKeyboardButton(opt, callback_data=f"ans_{i}_{data['answer_index']}")])
             
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await msg.edit_text(f"❓ **प्रश्न:** {data['question']}", reply_markup=reply_markup, parse_mode="Markdown")
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text=f"❓ **प्रश्न:** {data['question']}", 
+            reply_markup=reply_markup, 
+            parse_mode="Markdown"
+        )
     except Exception as e:
-        await msg.edit_text(f"❌ Question banane mein problem aayi: {str(e)[:50]}")
+        await context.bot.send_message(chat_id=chat_id, text=f"❌ Question banane mein problem aayi: {str(e)[:50]}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Hello! AI Quiz Bot mein aapka swagat hai.\n\nQuiz start karne ke liye likhein:\n`/quiz <topic>`\nExample: `/quiz History` ya `/quiz Cricket`", parse_mode="Markdown")
+    await update.message.reply_text(
+        "👋 **Rajasthan Exam Quiz Bot** me aapka swagat hai!\n\n"
+        "RPSC / RSMSSB / CET level questions ke liye type karein:\n"
+        "`/quiz` (For Rajasthan & Latest Mixed Quiz)\n"
+        "`/quiz Rajasthan History` (For specific topics)", 
+        parse_mode="Markdown"
+    )
 
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    topic = " ".join(context.args) if context.args else "General Knowledge"
+    topic = " ".join(context.args) if context.args else "Rajasthan Special & Latest GK"
     context.user_data['last_topic'] = topic
+    
+    # Send temporary status message
+    temp_msg = await update.message.reply_text("🤖 *Naya question tayar ho raha hai...*", parse_mode="Markdown")
+    
+    # Delete temporary loading message and send actual question
     await send_new_question(update.effective_chat.id, context, topic)
+    await temp_msg.delete()
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     
-    # Answer checking logic
     _, selected, correct = query.data.split("_")
-    topic = context.user_data.get('last_topic', 'General Knowledge')
+    topic = context.user_data.get('last_topic', 'Rajasthan Special & Latest GK')
     
+    # Show instant Telegram Alert popup (No chat cluttering text!)
     if selected == correct:
-        await query.answer(text="✅ सही जवाब! 🎉", show_alert=False)
-        await query.edit_message_text(text=f"{query.message.text}\n\n✅ **सही जवाब!** 🎉\n\n⏳ *Agla question 2 second me aa raha hai...*", parse_mode="Markdown")
+        await query.answer(text="✅ Bilkul Sahi Jawab! 🎉", show_alert=True)
     else:
-        await query.answer(text=f"❌ गलत जवाब! सही option {int(correct)+1} था।", show_alert=False)
-        await query.edit_message_text(text=f"{query.message.text}\n\n❌ **गलत जवाब!** सही विकल्प {int(correct)+1} था।\n\n⏳ *Agla question 2 second me aa raha hai...*", parse_mode="Markdown")
+        await query.answer(text=f"❌ Galat Jawab! Sahi option ({int(correct)+1}) tha.", show_alert=True)
 
-    # Wait 2 seconds and automatically load the next question
-    await asyncio.sleep(2)
+    # Automatically trigger next question immediately as a NEW message
     await send_new_question(query.message.chat_id, context, topic)
 
 if __name__ == '__main__':
