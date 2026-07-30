@@ -35,14 +35,14 @@ client = Groq(api_key=GROQ_API_KEY)
 # Active chat topics store karne ke liye dictionary
 chat_topics = {}
 
-def generate_quiz_data(@dailyquiz_manish):
+def generate_quiz_data(topic):
     seed_id = random.randint(10000, 99999)
     
     # Randomly select section based on 70/30 weightage
     # 70% chance -> Rajasthan GK, 30% chance -> Current Affairs / India GK / Science
     weight_choice = random.choices(["RAJ_GK", "GENERAL_MIX"], weights=[70, 30], k=1)[0]
     
-    prompt = f"""
+        prompt = f"""
     You are an expert exam paper setter for competitive exams like RPSC, RSMSSB, RAS, and CET in Rajasthan.
     
     Generate 1 HARD/ADVANCED LEVEL multiple choice quiz question in HINDI script.
@@ -61,17 +61,19 @@ def generate_quiz_data(@dailyquiz_manish):
     - Ask conceptual, modern, exam-standard moderate to tough questions.
     - Write question, options, and explanation strictly in Hindi (हिंदी).
     - Limit question to under 250 characters and each option to under 100 characters.
+    - VERY IMPORTANT: Append "\n\n— Joined: @dailyquiz_manish" at the end of the question text.
     
     Return ONLY a valid raw JSON object with NO markdown, NO backticks.
 
     JSON Structure:
     {{
-        "question": "कठिन या परीक्षा स्तर का प्रश्न (हिंदी में)",
+        "question": "कठिन या परीक्षा स्तर का प्रश्न (हिंदी में)\n\n— Join: @dailyquiz_manish",
         "options": ["विकल्प A", "विकल्प B", "विकल्प C", "विकल्प D"],
         "answer_index": 0,
         "explanation": "संक्षिप्त स्पष्टीकरण (हिंदी में)"
     }}
     """
+
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
