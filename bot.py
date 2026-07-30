@@ -6,7 +6,7 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from groq import Groq
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, PollAnswerHandler, ContextTypes
 
 # --- DUMMY WEB SERVER FOR KOYEB PORT 8000 HEALTH CHECK ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -32,17 +32,27 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 client = Groq(api_key=GROQ_API_KEY)
 
+# Active chat topics store karne ke liye dictionary
+chat_topics = {}
+
 def generate_quiz_data(topic):
     seed_id = random.randint(10000, 99999)
+    
+    # Randomly select section based on 70/30 weightage
+    # 70% chance -> Rajasthan GK, 30% chance -> Current Affairs / India GK / Science
+    weight_choice = random.choices(["RAJ_GK", "GENERAL_MIX"], weights=[70, 30], k=1)[0]
     
     prompt = f"""
     You are an expert exam paper setter for competitive exams like RPSC, RSMSSB, RAS, and CET in Rajasthan.
     
     Generate 1 HARD/ADVANCED LEVEL multiple choice quiz question in HINDI script.
     
-    Topics Priority:
-    1. If user topic is specified, use that.
-    2. Otherwise, give 70% weightage to Rajasthan General Knowledge (History, Culture, Geography, Polity, Economic Review) and Latest Current Affairs, and 30% to Indian GK.
+    Strict Syllabus Distribution Rule for this question:
+    - Selected Category: {weight_choice}
+    - If 'RAJ_GK': Select a question strictly from Rajasthan GK (History, Polity, Geography, Art & Culture, or Economy).
+    - If 'GENERAL_MIX': Select a question strictly from Latest Current Affairs, India GK, or General Science.
+    
+    Specific Topic requested by user (if any): {topic}
 
     Constraint ID: {seed_id} (Must create a completely unique question every time).
 
@@ -89,24 +99,33 @@ async def send_new_poll(chat_id, context, topic):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 **Rajasthan Exam Quiz Bot** me aapka swagat hai!\n\n"
-        "Quiz start karne ke liye type karein:\n"
-        "`/quiz` (For Rajasthan & Latest Mixed Quiz)\n"
+        "Quiz start karne ke liye group me likhein:\n"
+        "`/quiz` (For 70% Raj GK + 30% Current/Science/India GK)\n"
         "`/quiz Rajasthan Geography` (For specific topics)", 
         parse_mode="Markdown"
     )
 
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    topic = " ".join(context.args) if context.args else "Rajasthan Special & Latest GK"
+    chat_id = update.effective_chat.id
+    topic = " ".join(context.args) if context.args else "Mixed Exam Special"
+    chat_topics[chat_id] = topic
     
     temp_msg = await update.message.reply_text("🤖 *Exam Level Question tayar ho raha hai...*", parse_mode="Markdown")
     
-    await send_new_poll(update.effective_chat.id, context, topic)
+    await send_new_poll(chat_id, context, topic)
     await temp_msg.delete()
+
+# Answer dete hi auto next question
+async def receive_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    for chat_id, topic in list(chat_topics.items()):
+        await send_new_poll(chat_id, context, topic)
+        break
 
 if __name__ == '__main__':
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("quiz", quiz))
+    app.add_handler(PollAnswerHandler(receive_poll_answer))
     
     print("Bot is starting...")
     app.run_polling()
