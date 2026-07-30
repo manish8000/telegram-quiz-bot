@@ -3,7 +3,7 @@ import json
 import logging
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from openai import OpenAI
+from groq import Groq
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -23,20 +23,20 @@ def run_health_check():
 
 threading.Thread(target=run_health_check, daemon=True).start()
 
-# --- OPENAI & TELEGRAM BOT LOGIC ---
+# --- GROQ & TELEGRAM BOT LOGIC ---
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+client = Groq(api_key=GROQ_API_KEY)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Hello! ChatGPT Quiz Bot mein aapka swagat hai.\n\nQuiz start karne ke liye likhein:\n`/quiz <topic>`", parse_mode="Markdown")
+    await update.message.reply_text("👋 Hello! AI Quiz Bot mein aapka swagat hai.\n\nQuiz start karne ke liye likhein:\n`/quiz <topic>`", parse_mode="Markdown")
 
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     topic = " ".join(context.args) if context.args else "General Knowledge"
-    msg = await update.message.reply_text(f"🤖 **{topic}** par AI question bana raha hai, 5 second rukiye...", parse_mode="Markdown")
+    msg = await update.message.reply_text(f"🤖 **{topic}** par AI question bana raha hai, 2 second rukiye...", parse_mode="Markdown")
     
     prompt = f"""
     Generate 1 multiple choice quiz question about '{topic}'.
@@ -52,7 +52,7 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"}
         )
@@ -87,4 +87,4 @@ if __name__ == '__main__':
     
     print("Bot is starting...")
     app.run_polling()
-            
+    
