@@ -14,7 +14,7 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, PollAnswerHandler, filters, ContextTypes
 )
 
-# --- DUMMY WEB SERVER FOR KOYEB HEALTH CHECK ---
+# --- KOYEB HEALTH CHECK SERVER ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -44,82 +44,90 @@ active_polls = {}
 
 def clean_extracted_text(text):
     text = re.sub(r'\s+', ' ', text)
-    return text[:1500].strip()
+    return text[:2000].strip()
 
-# PDF Text Se Questions Banane Ka Function
 def generate_quiz_from_text(text_content):
     seed_id = random.randint(10000, 99999)
     safe_text = clean_extracted_text(text_content)
     
-    prompt = f"""You are a quiz generator. Generate 1 multiple choice question in Hindi based on this text:
-"{safe_text}"
+    prompt = f"""
+    You are an expert exam paper setter.
+    Create 1 multiple choice quiz question in HINDI based ONLY on this text:
+    "{safe_text}"
 
-Constraint ID: {seed_id}
+    Constraint ID: {seed_id}
 
-Respond ONLY with valid JSON in this exact structure:
-{{
-    "question": "प्रश्न (हिंदी में)",
-    "options": ["विकल्प A", "विकल्प B", "विकल्प C", "विकल्प D"],
-    "answer_index": 0,
-    "explanation": "स्पष्टीकरण (हिंदी में)"
-}}"""
-
+    Return ONLY a valid JSON format like this:
+    {{
+        "question": "प्रश्न (हिंदी में)",
+        "options": ["विकल्प A", "विकल्प B", "विकल्प C", "विकल्प D"],
+        "answer_index": 0,
+        "explanation": "संक्षिप्त स्पष्टीकरण (हिंदी में)"
+    }}
+    """
     try:
         response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            response_format={"type": "json_object"}
-        )
-        return json.loads(response.choices[0].message.content)
-    except Exception as e:
-        logging.error(f"Error generating PDF quiz: {e}")
-        return None
-
-# General AI Quiz Function
-def generate_ai_quiz(topic):
-    seed_id = random.randint(10000, 99999)
-    
-    prompt = f"""Generate 1 hard multiple choice question in Hindi script for Rajasthan exams on topic: {topic}.
-Constraint ID: {seed_id}
-
-Respond ONLY with valid JSON in this exact structure:
-{{
-    "question": "प्रश्न (हिंदी में)",
-    "options": ["विकल्प A", "विकल्प B", "विकल्प C", "विकल्प D"],
-    "answer_index": 0,
-    "explanation": "स्पष्टीकरण (हिंदी में)"
-}}"""
-
-    try:
-        response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
             response_format={"type": "json_object"}
         )
         return json.loads(response.choices[0].message.content)
     except Exception as e:
-        logging.error(f"Error generating AI quiz: {e}")
+        logging.error(f"Error in Groq PDF Quiz Generation: {e}")
         return None
 
-# Poll Send Karne Ka Function
+def generate_ai_quiz(topic):
+    seed_id = random.randint(10000, 99999)
+    weight_choice = random.choices(["RAJ_GK", "GENERAL_MIX"], weights=[70, 30], k=1)[0]
+    
+    prompt = f"""
+    You are an expert exam paper setter for competitive exams.
+    Generate 1 HARD LEVEL multiple choice quiz question in HINDI script.
+    Category: {weight_choice}
+    Topic: {topic}
+    Constraint ID: {seed_id}
+
+    Return ONLY raw JSON:
+    {{
+        "question": "प्रश्न (हिंदी में)",
+        "options": ["विकल्प A", "विकल्प B", "विकल्प C", "विकल्प D"],
+        "answer_index": 0,
+        "explanation": "संक्षिप्त स्पष्टीकरण (हिंदी में)"
+    }}
+    """
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.85,
+            response_format={"type": "json_object"}
+        )
+        return json.loads(response.choices[0].message.content)
+    except Exception as e:
+        logging.error(f"Error in Groq Quiz Generation: {e}")
+        return None
+
 async def send_next_question(chat_id, context):
     if chat_id not in chat_sessions or not chat_sessions[chat_id]["active"]:
         return
 
     session = chat_sessions[chat_id]
+    
+    # Try generating quiz with retries so loop never breaks
     q_data = None
-    
-    if chat_id in chat_pdf_text and chat_pdf_text[chat_id]:
-        q_data = generate_quiz_from_text(chat_pdf_text[chat_id])
-    
-    # Fallback to general AI quiz if PDF fails or doesn't exist
-    if not q_data:
-        q_data = generate_ai_quiz(session.get("topic", "Rajasthan GK"))
+    for attempt in range(3):
+        if chat_id in chat_pdf_text and chat_pdf_text[chat_id]:
+            q_data = generate_quiz_from_text(chat_pdf_text[chat_id])
+        else:
+            q_data = generate_ai_quiz(session["topic"])
+        if q_data:
+            break
+        await asyncio.sleep(2)
 
     if not q_data:
-        await asyncio.sleep(2)
+        logging.warning("AI failed after retries, retrying next loop...")
+        await asyncio.sleep(3)
         return await send_next_question(chat_id, context)
 
     q_text = f"{q_data['question']}\n\n📢 @dailyquiz_manish"
@@ -142,10 +150,13 @@ async def send_next_question(chat_id, context):
             "handled": False
         }
 
+        # Auto timeout to move to next question if nobody answers
         asyncio.create_task(auto_timeout_next(poll_msg.poll.id, chat_id, context))
 
     except Exception as e:
         logging.error(f"Error sending poll: {e}")
+        await asyncio.sleep(3)
+        await send_next_question(chat_id, context)
 
 async def auto_timeout_next(poll_id, chat_id, context):
     await asyncio.sleep(16)
@@ -153,13 +164,10 @@ async def auto_timeout_next(poll_id, chat_id, context):
         active_polls[poll_id]["handled"] = True
         await send_next_question(chat_id, context)
 
-# PDF Handler
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document
-    
     if doc.mime_type == 'application/pdf' or doc.file_name.endswith('.pdf'):
         msg = await update.message.reply_text("📄 *PDF मिल गई है, टेक्स्ट रीड कर रहा हूँ...*", parse_mode="Markdown")
-        
         try:
             file = await context.bot.get_file(doc.file_id)
             pdf_bytes = await file.download_as_bytearray()
@@ -172,36 +180,32 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id = update.effective_chat.id
             chat_pdf_text[chat_id] = extracted_text
             
-            await msg.edit_text("✅ *PDF Read हो गई!* अब `/pdfquiz` टाइप करके इस PDF से क्विज़ स्टार्ट करें।", parse_mode="Markdown")
+            await msg.edit_text("✅ *PDF Read हो गई!* अब `/pdfquiz` टाइप करके नॉन-स्टॉप क्विज़ स्टार्ट करें।", parse_mode="Markdown")
         except Exception as e:
-            logging.error(f"Error reading PDF: {e}")
+            logging.error(f"Error processing PDF: {e}")
             await msg.edit_text("❌ PDF पढ़ने में समस्या आई।")
     else:
         await update.message.reply_text("❌ कृपया सिर्फ PDF फाइल ही भेजें।")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 **Rajasthan Exam Quiz Bot**\n\n"
-        "• `/quiz` - Normal AI Quiz स्टार्ट करें\n"
-        "• **PDF से क्विज़:** PDF भेजें और `/pdfquiz` लिखें।\n"
-        "• `/stop` - चालू क्विज़ को रोकें\n"
-        "• `/clearpdf` - Saved PDF हटाएं", 
+        "👋 **Continuous AI Quiz Bot**\n\n"
+        "• `/quiz` - Normal AI Non-Stop Quiz\n"
+        "• `/pdfquiz` - PDF Based Non-Stop Quiz\n"
+        "• `/stop` - Quiz रोकने के लिए\n"
+        "• `/clearpdf` - Saved PDF हटाने के लिए", 
         parse_mode="Markdown"
     )
 
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    
-    # Clean topic arguments in case username is appended
-    args_filtered = [arg for arg in context.args if not arg.startswith("@")]
-    topic = " ".join(args_filtered) if args_filtered else "Mixed Exam Special"
-    
+    topic = " ".join(context.args) if context.args else "Mixed Exam Special"
     chat_sessions[chat_id] = {"active": True, "topic": topic}
     
     if chat_id in chat_pdf_text:
         del chat_pdf_text[chat_id]
 
-    await update.message.reply_text(f"🚀 **Quiz Started!**\nTopic: {topic}")
+    await update.message.reply_text("🚀 **Normal AI Quiz Started! (Non-Stop Mode)**")
     await send_next_question(chat_id, context)
 
 async def pdfquiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -211,8 +215,14 @@ async def pdfquiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     chat_sessions[chat_id] = {"active": True, "topic": "PDF Based"}
-    await update.message.reply_text("📄 **PDF Quiz Started!**")
+    await update.message.reply_text("📄 **PDF Quiz Started! (Non-Stop Mode)**")
     await send_next_question(chat_id, context)
+
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if chat_id in chat_sessions:
+        chat_sessions[chat_id]["active"] = False
+        await update.message.reply_text("🛑 **Quiz रोक दी गई है।** दोबारा शुरू करने के लिए `/quiz` या `/pdfquiz` लिखें।")
 
 async def clearpdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -220,19 +230,13 @@ async def clearpdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del chat_pdf_text[chat_id]
     await update.message.reply_text("🗑️ PDF मेमोरी से हटा दी गई है।")
 
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    if chat_id in chat_sessions and chat_sessions[chat_id]["active"]:
-        chat_sessions[chat_id]["active"] = False
-        await update.message.reply_text("🛑 **क्विज़ रोक दी गई है!**")
-    else:
-        await update.message.reply_text("⚠️ कोई भी चालू क्विज़ नहीं मिली।")
-
 async def receive_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     poll_id = update.poll_answer.poll_id
     if poll_id in active_polls and not active_polls[poll_id]["handled"]:
         active_polls[poll_id]["handled"] = True
         chat_id = active_polls[poll_id]["chat_id"]
+        # Wait 2 seconds so user can see correct option before next poll appears
+        await asyncio.sleep(2)
         await send_next_question(chat_id, context)
 
 if __name__ == '__main__':
@@ -241,8 +245,8 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("quiz", quiz))
     app.add_handler(CommandHandler("pdfquiz", pdfquiz))
-    app.add_handler(CommandHandler("clearpdf", clearpdf))
     app.add_handler(CommandHandler("stop", stop))
+    app.add_handler(CommandHandler("clearpdf", clearpdf))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(PollAnswerHandler(receive_poll_answer))
 
