@@ -221,6 +221,14 @@ async def clearpdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat_id in chat_pdf_text:
         del chat_pdf_text[chat_id]
     await update.message.reply_text("🗑️ PDF मेमोरी से हटा दी गई है।")
+    async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if chat_id in chat_sessions and chat_sessions[chat_id]["active"]:
+        chat_sessions[chat_id]["active"] = False
+        await update.message.reply_text("🛑 **क्विज़ रोक दी गई है!**")
+    else:
+        await update.message.reply_text("⚠️ कोई भी चालू क्विज़ नहीं मिली।")
+        
 
 async def receive_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     poll_id = update.poll_answer.poll_id
@@ -228,6 +236,8 @@ async def receive_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE
         active_polls[poll_id]["handled"] = True
         chat_id = active_polls[poll_id]["chat_id"]
         await send_next_question(chat_id, context)
+        app.add_handler(CommandHandler("stop", stop))
+        
 
 if __name__ == '__main__':
     app = ApplicationBuilder().token(BOT_TOKEN).build()
