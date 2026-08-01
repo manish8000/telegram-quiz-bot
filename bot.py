@@ -28,7 +28,22 @@ def run_health_check():
     server.serve_forever()
 
 threading.Thread(target=run_health_check, daemon=True).start()
+# --- FIXED DUMMY WEB SERVER FOR KOYEB & UPTIMEROBOT ---
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.wfile.write(b"OK")
 
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        return
+        
 # --- LOGGING & ENVS ---
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
