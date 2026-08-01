@@ -3,6 +3,7 @@ import json
 import logging
 import random
 import asyncio
+import re
 import threading
 from io import BytesIO
 import pypdf
@@ -37,30 +38,28 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 client = Groq(api_key=GROQ_API_KEY)
 
 # Global Stores
-chat_pdf_text = {}  # PDF content per chat
+chat_pdf_text = {}
 chat_sessions = {}
 active_polls = {}
 
-# PDF Text Se Questions Banane Ka Function
+# PDF Text Clean करने का Function
+def clean_extracted_text(text):
+    text = re.sub(r'\s+', ' ', text)
+    return text[:2000].strip()
+
+# PDF Text Se Questions Banane Ka Function (With Error Handling)
 def generate_quiz_from_text(text_content):
     seed_id = random.randint(10000, 99999)
+    safe_text = clean_extracted_text(text_content)
     
     prompt = f"""
-    You are an expert exam paper setter for competitive exams like RPSC, RSMSSB, RAS, and CET in Rajasthan.
-    
-    Read the following text extracted from a PDF document and generate 1 HARD/ADVANCED LEVEL multiple choice quiz question based ONLY on this content.
-    
-    Content:
-    "{text_content[:3000]}"
-    
+    You are an expert exam paper setter for competitive exams in Rajasthan.
+    Create 1 multiple choice quiz question in HINDI based ONLY on this text:
+    "{safe_text}"
+
     Constraint ID: {seed_id}
 
-    Rules:
-    - Write question, options, and explanation strictly in Hindi script (हिंदी).
-    - Limit question to under 180 characters and each option to under 80 characters.
-    - Return ONLY a valid raw JSON object with NO markdown, NO backticks.
-
-    JSON Structure:
+    Return ONLY a valid JSON format like this:
     {{
         "question": "प्रश्न (हिंदी में)",
         "options": ["विकल्प A", "विकल्प B", "विकल्प C", "विकल्प D"],
@@ -68,23 +67,27 @@ def generate_quiz_from_text(text_content):
         "explanation": "संक्षिप्त स्पष्टीकरण (हिंदी में)"
     }}
     """
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7,
-        response_format={"type": "json_object"}
-    )
-    return json.loads(response.choices[0].message.content)
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.5,
+            response_format={"type": "json_object"}
+        )
+        content = response.choices[0].message.content
+        return json.loads(content)
+    except Exception as e:
+        logging.error(f"Error in Groq PDF Quiz Generation: {e}")
+        return None
 
-# General AI Quiz Function (agar PDF na ho)
+# General AI Quiz Function
 def generate_ai_quiz(topic):
     seed_id = random.randint(10000, 99999)
     weight_choice = random.choices(["RAJ_GK", "GENERAL_MIX"], weights=[70, 30], k=1)[0]
     
     prompt = f"""
-    You are an expert exam paper setter for competitive exams like RPSC, RSMSSB, RAS, and CET in Rajasthan.
+    You are an expert exam paper setter for competitive exams like RPSC, RSMSSB in Rajasthan.
     Generate 1 HARD LEVEL multiple choice quiz question in HINDI script.
-    
     Category: {weight_choice}
     Topic: {topic}
     Constraint ID: {seed_id}
@@ -97,13 +100,17 @@ def generate_ai_quiz(topic):
         "explanation": "संक्षिप्त स्पष्टीकरण (हिंदी में)"
     }}
     """
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.85,
-        response_format={"type": "json_object"}
-    )
-    return json.loads(response.choices[0].message.content)
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.85,
+            response_format={"type": "json_object"}
+        )
+        return json.loads(response.choices[0].message.content)
+    except Exception as e:
+        logging.error(f"Error in Groq Quiz Generation: {e}")
+        return None
 
 # Poll Send Karne Ka Function
 async def send_next_question(chat_id, context):
@@ -112,11 +119,15 @@ async def send_next_question(chat_id, context):
 
     session = chat_sessions[chat_id]
     
-    # Agar chat me PDF upload hui hai to usme se banao, nahi to General AI se
     if chat_id in chat_pdf_text and chat_pdf_text[chat_id]:
         q_data = generate_quiz_from_text(chat_pdf_text[chat_id])
     else:
         q_data = generate_ai_quiz(session["topic"])
+
+    if not q_data:
+        await context.bot.send_message(chat_id=chat_id, text="⚠️ AI से प्रश्न जनरेट करने में समस्या आई, अगला प्रयास कर रहे हैं...")
+        await asyncio.sleep(3)
+        return await send_next_question(chat_id, context)
 
     q_text = f"{q_data['question']}\n\n📢 @dailyquiz_manish"
     exp_text = f"{q_data.get('explanation', 'सही उत्तर चुनें!')}\n\n👉 Join: @dailyquiz_manish"
@@ -129,7 +140,7 @@ async def send_next_question(chat_id, context):
             type="quiz",
             correct_option_id=int(q_data["answer_index"]),
             explanation=exp_text,
-            open_period=15,  # 15 second timer
+            open_period=15,
             is_anonymous=False
         )
 
@@ -149,26 +160,29 @@ async def auto_timeout_next(poll_id, chat_id, context):
         active_polls[poll_id]["handled"] = True
         await send_next_question(chat_id, context)
 
-# PDF Document Handler (pypdf library use ki hai)
+# PDF Document Handler
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document
     
     if doc.mime_type == 'application/pdf' or doc.file_name.endswith('.pdf'):
         msg = await update.message.reply_text("📄 *PDF मिल गई है, टेक्स्ट रीड कर रहा हूँ...*", parse_mode="Markdown")
         
-        file = await context.bot.get_file(doc.file_id)
-        pdf_bytes = await file.download_as_bytearray()
-        
-        # pypdf se text read karna
-        pdf_reader = pypdf.PdfReader(BytesIO(pdf_bytes))
-        extracted_text = ""
-        for page in pdf_reader.pages:
-            extracted_text += page.extract_text() or ""
+        try:
+            file = await context.bot.get_file(doc.file_id)
+            pdf_bytes = await file.download_as_bytearray()
+            
+            pdf_reader = pypdf.PdfReader(BytesIO(pdf_bytes))
+            extracted_text = ""
+            for page in pdf_reader.pages:
+                extracted_text += (page.extract_text() or "") + " "
 
-        chat_id = update.effective_chat.id
-        chat_pdf_text[chat_id] = extracted_text
-        
-        await msg.edit_text("✅ *PDF Read हो गई!* अब `/pdfquiz` टाइप करके इस PDF से क्विज़ स्टार्ट करें।", parse_mode="Markdown")
+            chat_id = update.effective_chat.id
+            chat_pdf_text[chat_id] = extracted_text
+            
+            await msg.edit_text("✅ *PDF Read हो गई!* अब `/pdfquiz` टाइप करके इस PDF से क्विज़ स्टार्ट करें।", parse_mode="Markdown")
+        except Exception as e:
+            logging.error(f"Error processing PDF: {e}")
+            await msg.edit_text("❌ PDF पढ़ने में समस्या आई। कृपया कोई अन्य टेक्स्ट-आधारित PDF भेजें।")
     else:
         await update.message.reply_text("❌ कृपया सिर्फ PDF फाइल ही भेजें।")
 
