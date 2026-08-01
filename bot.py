@@ -5,7 +5,7 @@ import random
 import asyncio
 import threading
 from io import BytesIO
-import PyPDF2
+import pypdf
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from groq import Groq
 from telegram import Update
@@ -13,7 +13,7 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, PollAnswerHandler, filters, ContextTypes
 )
 
-# --- KOYEB HEALTH CHECK ---
+# --- DUMMY WEB SERVER FOR KOYEB HEALTH CHECK ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -28,6 +28,7 @@ def run_health_check():
 
 threading.Thread(target=run_health_check, daemon=True).start()
 
+# --- LOGGING & ENVS ---
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -148,7 +149,7 @@ async def auto_timeout_next(poll_id, chat_id, context):
         active_polls[poll_id]["handled"] = True
         await send_next_question(chat_id, context)
 
-# PDF Document Handler (Jab user Telegram par PDF bheje)
+# PDF Document Handler (pypdf library use ki hai)
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document
     
@@ -158,8 +159,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file = await context.bot.get_file(doc.file_id)
         pdf_bytes = await file.download_as_bytearray()
         
-        # PyPDF2 se text extract karna
-        pdf_reader = PyPDF2.PdfReader(BytesIO(pdf_bytes))
+        # pypdf se text read karna
+        pdf_reader = pypdf.PdfReader(BytesIO(pdf_bytes))
         extracted_text = ""
         for page in pdf_reader.pages:
             extracted_text += page.extract_text() or ""
