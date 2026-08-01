@@ -1,7 +1,6 @@
 import os
 import io
 import json
-import random
 import logging
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -22,7 +21,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
-# --- WEB SERVER FOR KOYEB & UPTIMEROBOT ---
+# --- WEB SERVER FOR KOYEB ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -52,40 +51,33 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 # --- DATA STORES ---
-poll_answers_store = {}  # Store correct option and explanations
-user_scores = {}        # Track scores with 1/3 negative marking
-last_questions = {}     # Store last question for editing
+poll_answers_store = {}
+user_scores = {}
+last_questions = {}
 
 # --- COMMAND HANDLERS ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
         "<b>📄 Advanced PDF & Text Quiz Bot</b>\n\n"
-        "• मुझे कितनी भी <b>बड़ी PDF या Text फाइल</b> भेजें!\n"
+        "• मुझे कोई भी <b>PDF या Text फाइल</b> भेजें!\n"
         "• AI फाइल से सवाल पढ़कर तुरंत क्विज़ शुरू कर देगा।\n"
-        "• AI पढ़ने के बाद आपकी फाइल <b>स्वचालित (Auto) डिलीट</b> हो जाएगी।\n\n"
+        "• AI पढ़ने के बाद फाइल <b>Auto Delete</b> हो जाएगी।\n\n"
         "<b>⚡ फीचर्स:</b>\n"
-        "⏱️ 15-सेकंड का ऑटो-टाइमर\n"
+        "⏱️ 15-सेकंड ऑटो-टाइमर\n"
         "❌ 1/3 नेगेटिव मार्किंग (-0.33 points)\n"
         "💡 व्याख्या (Explanation) हर उत्तर पर\n"
-        "✏️ गलत सवाल ठीक करने के लिए <code>/edit</code> चलाएं"
+        "✏️ प्रश्न सुधारने के लिए <code>/edit</code> चलाएं"
     )
     await update.message.reply_text(welcome_text, parse_mode="HTML")
 
 # --- AI PARSER FOR LARGE FILES ---
 def extract_questions_with_ai(text_chunk):
-    prompt = f"""Extract or generate multiple choice questions in Hindi from this text.
-Strictly return a JSON Array of objects with this structure:
-[
-  {{
-    "question": "प्रश्न यहाँ...",
-    "options": ["ऑप्शन A", "ऑप्शन B", "ऑप्शन C", "ऑप्शन D"],
-    "answer_index": 0,
-    "explanation": "संक्षिप्त स्पष्टीकरण..."
-  }}
-]
-
-Text Content:
-{text_chunk[:4000]}"""  # Processing large chunk safely
+    prompt = (
+        "Extract or generate multiple choice questions in Hindi from this text. "
+        "Strictly return a JSON Array of objects with this structure: "
+        '[{"question": "प्रश्न...", "options": ["A", "B", "C", "D"], "answer_index": 0, "explanation": "व्याख्या..."}] '
+        "Text Content:\n" + text_chunk[:4000]
+    )
 
     try:
         response = client.chat.completions.create(
@@ -119,24 +111,21 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("⏳ बड़ी फाइल का विश्लेषण किया जा रहा है... AI प्रश्न तैयार कर रहा है...")
 
     try:
-        # Download file to memory buffer (RAM only)
         file = await doc.get_file()
         file_bytes = await file.download_as_bytearray()
 
         text_content = ""
         if file_name.endswith('.pdf'):
             reader = pypdf.PdfReader(io.BytesIO(file_bytes))
-            for page in reader.pages[:15]:  # Read up to 15 pages safely
+            for page in reader.pages[:15]:
                 text_content += page.extract_text() + "\n"
         else:
             text_content = file_bytes.decode('utf-8', errors='ignore')
 
-        # Clear file from RAM/Memory immediately for safety
         del file_bytes
 
-        # Generate questions via AI
         questions = extract_questions_with_ai(text_content)
-        del text_content  # Delete text after extraction
+        del text_content
 
         if not questions:
             await msg.edit_text("❌ फाइल में से प्रश्न नहीं निकाले जा सके। कृपया फाइल का फॉर्मेट चेक करें।")
@@ -144,7 +133,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await msg.edit_text(f"✅ {len(questions)} प्रश्न तैयार हैं! फाइल ऑटो-डिलीट हो गई है। क्विज़ शुरू हो रही है...\n")
 
-        # Send Polls with 15-second Timer, Explanation, and Username
         for q in questions:
             exp_text = f"💡 {q.get('explanation', 'सही उत्तर चुनें')}\n\n🤖 Quiz Bot: @{bot_username}"
             
@@ -155,11 +143,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 type=Poll.QUIZ,
                 correct_option_id=q["answer_index"],
                 explanation=exp_text,
-                open_period=15,  # 15 Seconds Timer ⌛
+                open_period=15,
                 is_anonymous=False
             )
 
-            # Store poll data for negative marking & editing
             poll_answers_store[sent_poll.poll.id] = {
                 "correct_option": q["answer_index"],
                 "chat_id": update.effective_chat.id
@@ -170,20 +157,18 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"Error: {e}")
         await msg.edit_text("❌ फाइल प्रोसेस करने में दिक्कत आई।")
 
-# --- EDIT QUESTION COMMAND ---
+# --- EDIT COMMAND ---
 async def edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if chat_id not in last_questions:
         await update.message.reply_text("❌ एडिट करने के लिए हाल ही का कोई प्रश्न नहीं मिला।")
         return
 
-    # Syntax: /edit नया प्रश्न? | ऑप्शन1 | ऑप्शन2 | ऑप्शन3 | ऑप्शन4 | सही_ऑप्शन_नंबर(0-3)
     args = " ".join(context.args).split("|")
     if len(args) < 6:
         await update.message.reply_text(
             "✏️ <b>प्रश्न एडिट करने का तरीका:</b>\n\n"
-            "<code>/edit नया प्रश्न यहाँ? | ऑप्शन A | ऑप्शन B | ऑप्शन C | ऑप्शन D | 1</code>\n\n"
-            "<i>(नोट: सबसे आखिरी में 0=A, 1=B, 2=C, 3=D लिखें)</i>",
+            "<code>/edit नया प्रश्न? | ऑप्शन A | ऑप्शन B | ऑप्शन C | ऑप्शन D | 1</code>",
             parse_mode="HTML"
         )
         return
@@ -195,7 +180,7 @@ async def edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_username = (await context.bot.get_me()).username
     exp_text = f"💡 एडिटेड प्रश्न\n\n🤖 Quiz Bot: @{bot_username}"
 
-    sent_poll = await context.bot.send_poll(
+    await context.bot.send_poll(
         chat_id=chat_id,
         question=q_text,
         options=opts,
@@ -207,7 +192,7 @@ async def edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text("✅ नया संशोधित (Edited) प्रश्न भेज दिया गया है!")
 
-# --- 1/3 NEGATIVE MARKING SYSTEM ---
+# --- NEGATIVE MARKING ---
 async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answer = update.poll_answer
     poll_id = answer.poll_id
@@ -224,9 +209,9 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         user_scores[user_id] = {"name": user_name, "score": 0.0}
 
     if selected_option == correct_option:
-        user_scores[user_id]["score"] += 1.0  # Right (+1)
+        user_scores[user_id]["score"] += 1.0
     else:
-        user_scores[user_id]["score"] -= 0.33  # Wrong (-1/3 Negative Marking)
+        user_scores[user_id]["score"] -= 0.33
 
 # --- MAIN RUNNER ---
 def main():
@@ -241,9 +226,9 @@ def main():
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(PollAnswerHandler(handle_poll_answer))
 
-    print("Advanced PDF Quiz Bot Started...")
+    print("Bot Started...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
-            
+    
